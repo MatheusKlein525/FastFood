@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 
 import java.util.List;
 
@@ -42,11 +44,7 @@ public class ProdutoController {
     }
 
     // 4. POST /produto : Adiciona produto
-    @PostMapping
-    public ResponseEntity<Produto> adicionar(@Valid @RequestBody Produto produto) {
-        Produto novoProduto = repository.save(produto);
-        return ResponseEntity.status(HttpStatus.CREATED).body(novoProduto);
-    }
+    
 
     // 5. PUT /produto/{id} : Altera Produto
     @PutMapping("/{id}")
@@ -63,6 +61,16 @@ public class ProdutoController {
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
+    @PostMapping
+public ResponseEntity<Produto> salvar(@RequestBody Produto produto) { // @RequestBody é ESSENCIAL
+    Produto salvo = repository.save(produto);
+    return ResponseEntity.status(HttpStatus.CREATED).body(salvo);
+}
+ public ResponseEntity<Produto> adicionar(@Valid @RequestBody Produto produto) {
+        Produto novoProduto = repository.save(produto);
+        return ResponseEntity.status(HttpStatus.CREATED).body(novoProduto);
+    }
+ 
 
     // 6. DELETE /produto/{id} : Exclui Produto
     @DeleteMapping("/{id}")
@@ -73,4 +81,6 @@ public class ProdutoController {
         repository.deleteById(id);
         return ResponseEntity.noContent().build();
     }
+   
+
 }

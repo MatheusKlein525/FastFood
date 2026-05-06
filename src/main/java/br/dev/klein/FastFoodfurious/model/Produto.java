@@ -1,7 +1,6 @@
 package br.dev.klein.FastFoodfurious.model;
 
 import jakarta.persistence.*;
-import java.math.BigDecimal;
 
 @Entity
 @Table(name = "tb_produtos")
@@ -18,17 +17,16 @@ public class Produto {
     private String descricao;
 
     @Column(nullable = false)
-    private BigDecimal preco;
+    private Double preco = 0.0; 
 
-    // A categoria será importante para o endpoint /produto/cat/{categoria}
     @Column(nullable = false, length = 50)
     private String categoria;
 
-    // Construtor vazio exigido pelo JPA
     public Produto() {
     }
 
-    // Getters e Setters
+    // --- GETTERS E SETTERS ---
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -38,8 +36,12 @@ public class Produto {
     public String getDescricao() { return descricao; }
     public void setDescricao(String descricao) { this.descricao = descricao; }
 
-    public BigDecimal getPreco() { return preco; }
-    public void setPreco(BigDecimal preco) { this.preco = preco; }
+    // APENAS UM GETTER: com a proteção de nulo
+    public Double getPreco() { 
+        return (preco == null) ? 0.0 : preco; 
+    }
+    
+    public void setPreco(Double preco) { this.preco = preco; }
 
     public String getCategoria() { return categoria; }
     public void setCategoria(String categoria) { this.categoria = categoria; }

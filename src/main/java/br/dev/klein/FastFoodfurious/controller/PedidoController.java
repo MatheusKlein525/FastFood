@@ -1,15 +1,20 @@
 package br.dev.klein.FastFoodfurious.controller;
 
 import br.dev.klein.FastFoodfurious.Pedido;
-import br.dev.klein.FastFoodfurious.controller.PedidoController;
+import br.dev.klein.FastFoodfurious.dto.PedidoRequestDTO;
+import br.dev.klein.FastFoodfurious.dto.PedidoResponseDTO;
+import br.dev.klein.FastFoodfurious.model.Produto;
 import br.dev.klein.FastFoodfurious.repository.PedidoRepository;
+import br.dev.klein.FastFoodfurious.repository.ProdutoRepository;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/fastfurious/pedido")
@@ -18,94 +23,103 @@ public class PedidoController {
     @Autowired
     private PedidoRepository repository;
 
-    // GET /pedido : Exibe lista geral de pedidos
+    @Autowired
+    private ProdutoRepository produtoRepository;
+
+    // --- LISTAR TODOS ---
     @GetMapping
     public ResponseEntity<List<Pedido>> listarTodos() {
         return ResponseEntity.ok(repository.findAll());
     }
 
-    // GET /pedido/{id} : Exibe pedido com id específico
+    // --- BUSCAR POR ID ---
     @GetMapping("/{id}")
     public ResponseEntity<Pedido> buscarPorId(@PathVariable Long id) {
-        Optional<Pedido> pedido = repository.findById(id);
-        
-        if (pedido.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        
-        return ResponseEntity.ok(pedido.get());
+        return repository.findById(id)
+                .map(pedido -> ResponseEntity.ok(pedido))
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    // GET /pedido/status/{status} : Exibe pedidos com status específico
-    @GetMapping("/status/{status}")
-    public ResponseEntity<List<Pedido>> buscarPorStatus(@PathVariable String status) {
-        List<Pedido> pedidos = repository.findByStatusIgnoreCase(status);
-        
-        if (pedidos.isEmpty()) {
-            return ResponseEntity.notFound().build();
+    // --- FATURAMENTO (Colocado antes do ID para evitar conflito) ---
+    @GetMapping("/faturamento")
+    public ResponseEntity<String> calcularFaturamento() {
+        try {
+            List<Pedido> pedidosEntregues = repository.findByStatusIgnoreCase("ENTREGUE");
+            double total = pedidosEntregues.stream()
+                    .mapToDouble(p -> p.getValorTotal() != null ? p.getValorTotal() : 0.0)
+                    .sum();
+            return ResponseEntity.ok("Faturamento Total: R$ " + total);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Erro ao calcular: " + e.getMessage());
         }
-        
-        return ResponseEntity.ok(pedidos);
     }
 
-    // POST /pedido : Adiciona pedido (Recebe o carrinho e fica ABERTO)
+    // --- ADICIONAR (USANDO DTO) ---
     @PostMapping
-    public ResponseEntity<Pedido> adicionar(@RequestBody Pedido pedido) {
-        pedido.setStatus("ABERTO"); 
-        Pedido novoPedido = repository.save(pedido);
-        return ResponseEntity.status(HttpStatus.CREATED).body(novoPedido);
-    }
+    public ResponseEntity<PedidoResponseDTO> adicionar(@RequestBody PedidoRequestDTO dto ) {
+        Pedido pedido = new Pedido();
+        List<Produto> produtosParaPedido = new ArrayList<>();
+        double total = 0.0;
 
-    // PUT /pedido/{id} : Altera pedido (Refatorado conforme o print)
-    @PutMapping("/{id}")
-    public ResponseEntity<Pedido> atualizar(@PathVariable Long id, @RequestBody Pedido pedido) {
-        // Verifica se o pedido existe
-        if (!repository.existsById(id)) {
-            return ResponseEntity.notFound().build();
+        if (dto.getProdutosIds() == null || dto.getProdutosIds().isEmpty()) {
+            return ResponseEntity.badRequest().build();
         }
 
-        pedido.setId(id);
-        pedido = repository.save(pedido);
-        return ResponseEntity.ok(pedido);
-    }
-
-    // DELETE /pedido/{id} : CANCELA pedido
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Pedido> cancelarPedido(@PathVariable Long id) {
-        Optional<Pedido> pedidoOpt = repository.findById(id);
-        
-        if (pedidoOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
+        for (Long id : dto.getProdutosIds()) {
+            Produto p = produtoRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Produto " + id + " não encontrado"));
+            produtosParaPedido.add(p);
+            total += p.getPreco();
         }
 
-        Pedido pedido = pedidoOpt.get();
-        pedido.setStatus("CANCELADO");
-        pedido = repository.save(pedido);
+        pedido.setProdutos(produtosParaPedido);
+        pedido.setValorTotal(total);
+        pedido.setStatus("ABERTO");
+        pedido.setDataCriacao(LocalDateTime.now());
+
+        repository.save(pedido);
+
+        // Converte para DTO de resposta para o cliente
+        List<String> nomes = produtosParaPedido.stream()
+                .map(Produto::getNome)
+                .collect(Collectors.toList());
         
-        return ResponseEntity.ok(pedido);
+        PedidoResponseDTO response = new PedidoResponseDTO(
+                pedido.getId(), 
+                pedido.getStatus(), 
+                total, 
+                nomes
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    // PUT /pedido/status/{id} : Altera o status do Pedido (Fluxo da Cozinha/Entrega)
+    // --- AVANÇAR STATUS ---
     @PutMapping("/status/{id}")
     public ResponseEntity<Pedido> avancarStatus(@PathVariable Long id) {
-        Optional<Pedido> pedidoOpt = repository.findById(id);
-        
-        if (pedidoOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        return repository.findById(id).map(pedido -> {
+            String statusAtual = pedido.getStatus().toUpperCase();
+            
+            if ("ABERTO".equals(statusAtual)) {
+                pedido.setStatus("PRONTO");
+            } else if ("PRONTO".equals(statusAtual)) {
+                pedido.setStatus("ENTREGUE");
+            } else {
+                return ResponseEntity.badRequest().<Pedido>build();
+            }
+            
+            return ResponseEntity.ok(repository.save(pedido));
+        }).orElse(ResponseEntity.notFound().build());
+    }
 
-        Pedido pedido = pedidoOpt.get();
-        String statusAtual = pedido.getStatus().toUpperCase();
-        
-        if ("ABERTO".equals(statusAtual)) {
-            pedido.setStatus("PRONTO");
-        } else if ("PRONTO".equals(statusAtual)) {
-            pedido.setStatus("ENTREGUE");
-        } else {
-            return ResponseEntity.badRequest().body(pedido); 
-        }
-        
-        pedido = repository.save(pedido);
-        return ResponseEntity.ok(pedido);
+    // --- CANCELAR PEDIDO ---
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Pedido> cancelarPedido(@PathVariable Long id) {
+        return repository.findById(id).map(pedido -> {
+            pedido.setStatus("CANCELADO");
+            repository.save(pedido);
+            return ResponseEntity.ok(pedido);
+        }).orElse(ResponseEntity.notFound().build());
     }
 }
